@@ -24,14 +24,14 @@ timers = {
 def timestamp_discord(dt):
     return f"<t:{int(dt.timestamp())}:t>"
 
-# ================= PARSE NY =================
-def parse_ny_time(hour_str):
+# ================= PARSE GERMANY =================
+def parse_germany_time(hour_str):
     try:
-        ny_tz = ZoneInfo("America/New_York")
-        ahora_ny = datetime.now(ny_tz)
+        de_tz = ZoneInfo("Europe/Berlin")
+        ahora_de = datetime.now(de_tz)
         hour, minute = map(int, hour_str.split(":"))
-        target = ahora_ny.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        if target > ahora_ny:
+        target = ahora_de.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if target > ahora_de:
             target -= timedelta(days=1)
         return target.astimezone(timezone.utc)
     except:
@@ -148,18 +148,18 @@ async def on_message(message):
             task = bot.loop.create_task(ciclo_boss(channel, boss))
             timers[boss]["task"] = task
 
-        # ===== RESET =====
+        # ===== RESET (Alemania) =====
         elif content.startswith("reset"):
             parts = content.split()
             if len(parts) != 3:
-                await channel.send("Use: reset ch2 02:34")
+                await channel.send("Use: reset ch2 14:30")
                 return
 
             _, boss, hora = parts
             if boss not in timers:
                 return
 
-            muerte = parse_ny_time(hora)
+            muerte = parse_germany_time(hora)
             if not muerte:
                 await channel.send("Invalid time format. Use HH:MM")
                 return
@@ -174,7 +174,7 @@ async def on_message(message):
 
             timers[boss]["spawn"] = spawn
             ts = timestamp_discord(spawn)
-            await channel.send(f"{boss.upper()} Reset (death NY {hora}) → Next Spawn {ts}")
+            await channel.send(f"{boss.upper()} Reset (death Germany {hora}) → Next Spawn {ts}")
             task = bot.loop.create_task(ciclo_boss(channel, boss))
             timers[boss]["task"] = task
 
