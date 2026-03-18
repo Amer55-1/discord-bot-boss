@@ -6,7 +6,7 @@ import os
 from zoneinfo import ZoneInfo
 
 # ================= CONFIG =================
-RESPAWN = timedelta(hours=2, minutes=3)  # Loop de respawn
+RESPAWN = timedelta(hours=2, minutes=3)  # Respawn 2h3m
 BOSS_CHANNEL_NAME = "boss-timers"
 # ==========================================
 
@@ -24,15 +24,40 @@ timers = {
 def timestamp_discord(dt):
     return f"<t:{int(dt.timestamp())}:t>"
 
+# ================= PARSE NY =================
+def parse_ny_time(hour_str):
+    try:
+        ny_tz = ZoneInfo("America/New_York")
+        ahora_ny = datetime.now(ny_tz)
+        hour, minute = map(int, hour_str.split(":"))
+        target = ahora_ny.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if target > ahora_ny:
+            target -= timedelta(days=1)
+        return target.astimezone(timezone.utc)
+    except:
+        return None
+
+# ================= BUSCAR CANAL =================
+async def get_boss_channel(guild):
+    if guild is None:
+        return None
+    for channel in guild.text_channels:
+        if channel.name == BOSS_CHANNEL_NAME and channel.permissions_for(guild.me).send_messages:
+            return channel
+    for channel in guild.text_channels:
+        if channel.permissions_for(guild.me).send_messages:
+            return channel
+    return None
+
 # ================= LOOP =================
 async def ciclo_boss(channel, boss):
-    print(f"Starting ciclo_boss task for {boss} at {datetime.now(timezone.utc)}")
+    print(f"Starting ciclo_boss for {boss} at {datetime.now(timezone.utc)}")
     try:
         while timers[boss]["spawn"]:
             spawn_time = timers[boss]["spawn"]
             ahora = datetime.now(timezone.utc)
 
-            # Corrige spawn en el pasado sumando respawns hasta futuro
+            # Ajustar spawn si quedó en el pasado
             while spawn_time <= ahora:
                 spawn_time += RESPAWN
 
@@ -41,83 +66,52 @@ async def ciclo_boss(channel, boss):
             aviso_10 = spawn_time - timedelta(minutes=10)
             aviso_5 = spawn_time - timedelta(minutes=5)
 
+            # Aviso 10 min
             ahora = datetime.now(timezone.utc)
             if aviso_10 > ahora:
                 await asyncio.sleep((aviso_10 - ahora).total_seconds())
-                if not timers[boss]["spawn"]:
-                    return
-                try:
-                    await channel.send(f"{boss.upper()} Boss in 10 min")
-                except Exception as e:
-                    print(f"Error enviando mensaje 10 min: {e}")
+                if timers[boss]["spawn"]:
+                    try:
+                        await channel.send(f"{boss.upper()} Boss in 10 min")
+                    except Exception as e:
+                        print(f"Error mensaje 10min: {e}")
 
+            # Aviso 5 min
             ahora = datetime.now(timezone.utc)
             if aviso_5 > ahora:
                 await asyncio.sleep((aviso_5 - ahora).total_seconds())
-                if not timers[boss]["spawn"]:
-                    return
-                try:
-                    await channel.send(f"{boss.upper()} Boss in 5 min")
-                except Exception as e:
-                    print(f"Error enviando mensaje 5 min: {e}")
+                if timers[boss]["spawn"]:
+                    try:
+                        await channel.send(f"{boss.upper()} Boss in 5 min")
+                    except Exception as e:
+                        print(f"Error mensaje 5min: {e}")
 
+            # Spawn
             ahora = datetime.now(timezone.utc)
             wait_time = (spawn_time - ahora).total_seconds()
             if wait_time > 0:
                 await asyncio.sleep(wait_time)
 
-            if not timers[boss]["spawn"]:
-                return
+            if timers[boss]["spawn"]:
+                try:
+                    await channel.send(f"{boss.upper()} BOSS UP!")
+                except Exception as e:
+                    print(f"Error mensaje BOSS UP: {e}")
 
-            try:
-                await channel.send(f"{boss.upper()} BOSS UP!")
-            except Exception as e:
-                print(f"Error enviando mensaje BOSS UP: {e}")
-
+            # Programar siguiente spawn
             spawn_time += RESPAWN
             timers[boss]["spawn"] = spawn_time
-
             ts = timestamp_discord(spawn_time)
             try:
                 await channel.send(f"{boss.upper()} Next Spawn {ts} (auto)")
             except Exception as e:
-                print(f"Error enviando mensaje Next Spawn: {e}")
+                print(f"Error mensaje Next Spawn: {e}")
 
     except asyncio.CancelledError:
-        print(f"ciclo_boss task for {boss} cancelled")
+        print(f"Ciclo {boss} cancelado")
         pass
 
-# ================= PARSE NY =================
-def parse_ny_time(hour_str):
-    try:
-        ny_tz = ZoneInfo("America/New_York")
-        ahora_ny = datetime.now(ny_tz)
-
-        hour, minute = map(int, hour_str.split(":"))
-        target = ahora_ny.replace(hour=hour, minute=minute, second=0, microsecond=0)
-
-        if target > ahora_ny:
-            target -= timedelta(days=1)
-
-        return target.astimezone(timezone.utc)
-
-    except:
-        return None
-
-# ================= HELPER CHANNEL =================
-async def get_boss_channel(guild):
-    # Primero buscar canal boss-timers donde pueda enviar mensajes
-    for channel in guild.text_channels:
-        if channel.name == BOSS_CHANNEL_NAME:
-            if channel.permissions_for(guild.me).send_messages:
-                return channel
-    # fallback: cualquier canal donde pueda enviar mensajes
-    for channel in guild.text_channels:
-        if channel.permissions_for(guild.me).send_messages:
-            return channel
-    return None
-
-# ================= BOT EVENTS =================
+# ================= EVENTOS =================
 @bot.event
 async def on_ready():
     print(f"Bot conectado como {bot.user}")
@@ -147,16 +141,14 @@ async def on_message(message):
                 except asyncio.CancelledError:
                     pass
 
-            ahora = datetime.now(timezone.utc)
-            spawn = ahora + timedelta(hours=2)
+            spawn = datetime.now(timezone.utc) + timedelta(hours=2)
             timers[boss]["spawn"] = spawn
             ts = timestamp_discord(spawn)
             await channel.send(f"Boss {boss.upper()} Dead, Next Spawn {ts}")
-
             task = bot.loop.create_task(ciclo_boss(channel, boss))
             timers[boss]["task"] = task
 
-        # ===== RESET DESDE HORA NY =====
+        # ===== RESET =====
         elif content.startswith("reset"):
             parts = content.split()
             if len(parts) != 3:
@@ -183,7 +175,6 @@ async def on_message(message):
             timers[boss]["spawn"] = spawn
             ts = timestamp_discord(spawn)
             await channel.send(f"{boss.upper()} Reset (death NY {hora}) → Next Spawn {ts}")
-
             task = bot.loop.create_task(ciclo_boss(channel, boss))
             timers[boss]["task"] = task
 
