@@ -6,8 +6,9 @@ import os
 from zoneinfo import ZoneInfo
 
 # ================= CONFIG =================
-RESPAWN = timedelta(hours=2, minutes=2)  # Respawn 2h2m
-BOSS_CHANNEL_NAME = "boss-timers"
+CANAL_NOMBRE = "boss-timers"
+RESPAWN = timedelta(hours=2, minutes=2)  # Cambiado a 2h 2min
+
 # ==========================================
 
 intents = discord.Intents.default()
@@ -77,25 +78,23 @@ async def ciclo_boss(channel, boss):
         print(f"ciclo_boss task for {boss} cancelled")
         pass
 
-# ================= PARSE GERMANY =================
-def parse_germany_time(hour_str):
+# ================= PARSE BERLIN =================
+def parse_berlin_time(hour_str):
     try:
-        de_tz = ZoneInfo("Europe/Berlin")
-        ahora_de = datetime.now(de_tz)
+        berlin_tz = ZoneInfo("Europe/Berlin")
+        ahora_berlin = datetime.now(berlin_tz)
+
         hour, minute = map(int, hour_str.split(":"))
-        target = ahora_de.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        if target > ahora_de:
+
+        target = ahora_berlin.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+        if target > ahora_berlin:
             target -= timedelta(days=1)
+
         return target.astimezone(timezone.utc)
+
     except:
         return None
-
-# ================= BUSCAR CANAL =================
-async def get_boss_channel(guild):
-    for channel in guild.text_channels:
-        if channel.name == BOSS_CHANNEL_NAME and channel.permissions_for(guild.me).send_messages:
-            return channel
-    return None
 
 # ================= BOT EVENTS =================
 @bot.event
@@ -107,8 +106,8 @@ async def on_message(message):
     if message.author.bot:
         return
 
-    channel = await get_boss_channel(message.guild)
-    if not channel:
+    # Buscar canal por nombre
+    if message.channel.name != CANAL_NOMBRE:
         return
 
     content = message.content.lower()
@@ -126,23 +125,25 @@ async def on_message(message):
                 pass
 
         ahora = datetime.now(timezone.utc)
-        spawn = ahora + timedelta(hours=2)
+        spawn = ahora + RESPAWN
 
         timers[boss]["spawn"] = spawn
+
         ts = timestamp_discord(spawn)
 
-        await channel.send(
+        await message.channel.send(
             f"Boss {boss.upper()} Dead, Next Spawn {ts}"
         )
 
-        task = bot.loop.create_task(ciclo_boss(channel, boss))
+        task = bot.loop.create_task(ciclo_boss(message.channel, boss))
         timers[boss]["task"] = task
 
-    # ===== RESET DESDE HORA ALEMANIA =====
+    # ===== RESET DESDE HORA BERLIN =====
     elif content.startswith("reset"):
         parts = content.split()
+
         if len(parts) != 3:
-            await channel.send("Use: reset ch2 14:30")
+            await message.channel.send("Use: reset ch2 02:34")
             return
 
         _, boss, hora = parts
@@ -150,12 +151,13 @@ async def on_message(message):
         if boss not in timers:
             return
 
-        muerte = parse_germany_time(hora)
+        muerte = parse_berlin_time(hora)
+
         if not muerte:
-            await channel.send("Invalid time format. Use HH:MM")
+            await message.channel.send("Invalid time format. Use HH:MM")
             return
 
-        spawn = muerte + timedelta(hours=2)
+        spawn = muerte + RESPAWN
 
         # Cancelar y esperar tarea previa
         if timers[boss]["task"]:
@@ -166,13 +168,14 @@ async def on_message(message):
                 pass
 
         timers[boss]["spawn"] = spawn
+
         ts = timestamp_discord(spawn)
 
-        await channel.send(
-            f"{boss.upper()} Reset (death Germany {hora}) → Next Spawn {ts}"
+        await message.channel.send(
+            f"{boss.upper()} Reset (death Berlin {hora}) → Next Spawn {ts}"
         )
 
-        task = bot.loop.create_task(ciclo_boss(channel, boss))
+        task = bot.loop.create_task(ciclo_boss(message.channel, boss))
         timers[boss]["task"] = task
 
     # ===== DELETE =====
@@ -190,14 +193,15 @@ async def on_message(message):
                     pass
                 timers[boss]["task"] = None
 
-            await channel.send(f"{boss.upper()} timer deleted")
+            await message.channel.send(f"{boss.upper()} timer deleted")
         else:
-            await channel.send(f"No active timer for {boss.upper()}")
+            await message.channel.send(f"No active timer for {boss.upper()}")
 
     await bot.process_commands(message)
 
 # ================= RUN =================
 TOKEN = os.getenv("TOKEN")
+
 if not TOKEN:
     raise ValueError("TOKEN no encontrado en Railway")
 
