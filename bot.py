@@ -6,7 +6,7 @@ import os
 from zoneinfo import ZoneInfo
 
 # ================= CONFIG =================
-RESPAWN = timedelta(hours=2, minutes=3)  # Respawn 2h3m
+RESPAWN = timedelta(hours=2, minutes=2)  # Respawn 2h2m
 BOSS_CHANNEL_NAME = "boss-timers"
 # ==========================================
 
@@ -17,13 +17,65 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 # Timers por boss
 timers = {
-    "ch2": {"spawn": None, "task": None, "lock": asyncio.Lock()},
-    "ch4": {"spawn": None, "task": None, "lock": asyncio.Lock()}
+    "ch2": {"spawn": None, "task": None},
+    "ch4": {"spawn": None, "task": None}
 }
 
 def timestamp_discord(dt):
-    # Devuelve formato global <t:timestamp:t>
     return f"<t:{int(dt.timestamp())}:t>"
+
+# ================= LOOP =================
+async def ciclo_boss(channel, boss):
+    print(f"Starting ciclo_boss task for {boss} at {datetime.now(timezone.utc)}")
+    try:
+        while timers[boss]["spawn"]:
+            spawn_time = timers[boss]["spawn"]
+
+            ahora = datetime.now(timezone.utc)
+
+            # Corrige spawn en el pasado sumando respawns hasta futuro
+            while spawn_time <= ahora:
+                spawn_time += RESPAWN
+
+            timers[boss]["spawn"] = spawn_time
+
+            aviso_10 = spawn_time - timedelta(minutes=10)
+            aviso_5 = spawn_time - timedelta(minutes=5)
+
+            ahora = datetime.now(timezone.utc)
+            if aviso_10 > ahora:
+                await asyncio.sleep((aviso_10 - ahora).total_seconds())
+                if not timers[boss]["spawn"]:
+                    return
+                await channel.send(f"{boss.upper()} Boss in 10 min")
+
+            ahora = datetime.now(timezone.utc)
+            if aviso_5 > ahora:
+                await asyncio.sleep((aviso_5 - ahora).total_seconds())
+                if not timers[boss]["spawn"]:
+                    return
+                await channel.send(f"{boss.upper()} Boss in 5 min")
+
+            ahora = datetime.now(timezone.utc)
+            wait_time = (spawn_time - ahora).total_seconds()
+
+            if wait_time > 0:
+                await asyncio.sleep(wait_time)
+
+            if not timers[boss]["spawn"]:
+                return
+
+            await channel.send(f"{boss.upper()} BOSS UP!")
+
+            spawn_time += RESPAWN
+            timers[boss]["spawn"] = spawn_time
+
+            ts = timestamp_discord(spawn_time)
+            await channel.send(f"{boss.upper()} Next Spawn {ts} (auto)")
+
+    except asyncio.CancelledError:
+        print(f"ciclo_boss task for {boss} cancelled")
+        pass
 
 # ================= PARSE GERMANY =================
 def parse_germany_time(hour_str):
@@ -40,75 +92,23 @@ def parse_germany_time(hour_str):
 
 # ================= BUSCAR CANAL =================
 async def get_boss_channel(guild):
-    if guild is None:
-        return None
     for channel in guild.text_channels:
         if channel.name == BOSS_CHANNEL_NAME and channel.permissions_for(guild.me).send_messages:
             return channel
-    # fallback al primer canal donde pueda escribir
-    for channel in guild.text_channels:
-        if channel.permissions_for(guild.me).send_messages:
-            return channel
     return None
 
-# ================= LOOP =================
-async def ciclo_boss(channel, boss):
-    async with timers[boss]["lock"]:
-        print(f"Starting ciclo_boss for {boss} at {datetime.now(timezone.utc)}")
-        try:
-            while timers[boss]["spawn"]:
-                spawn_time = timers[boss]["spawn"]
-                ahora = datetime.now(timezone.utc)
-
-                # Ajustar spawn si quedó en el pasado
-                while spawn_time <= ahora:
-                    spawn_time += RESPAWN
-                timers[boss]["spawn"] = spawn_time
-
-                aviso_10_sent = False
-                aviso_5_sent = False
-
-                while True:
-                    ahora = datetime.now(timezone.utc)
-                    if not timers[boss]["spawn"]:
-                        return
-
-                    # Aviso 10 min
-                    if not aviso_10_sent and ahora >= spawn_time - timedelta(minutes=10):
-                        await channel.send(f"{boss.upper()} Boss in 10 min")
-                        aviso_10_sent = True
-
-                    # Aviso 5 min
-                    if not aviso_5_sent and ahora >= spawn_time - timedelta(minutes=5):
-                        await channel.send(f"{boss.upper()} Boss in 5 min")
-                        aviso_5_sent = True
-
-                    # Spawn
-                    if ahora >= spawn_time:
-                        await channel.send(f"{boss.upper()} BOSS UP!")
-                        await channel.send(f"{boss.upper()} Next Spawn {timestamp_discord(spawn_time)} (auto)")
-                        spawn_time += RESPAWN
-                        timers[boss]["spawn"] = spawn_time
-                        break
-
-                    await asyncio.sleep(1)
-        except asyncio.CancelledError:
-            print(f"Ciclo {boss} cancelado")
-            pass
-
-# ================= EVENTOS =================
+# ================= BOT EVENTS =================
 @bot.event
 async def on_ready():
     print(f"Bot conectado como {bot.user}")
 
 @bot.event
 async def on_message(message):
-    if message.author.bot or not message.guild:
+    if message.author.bot:
         return
 
     channel = await get_boss_channel(message.guild)
-    if channel is None:
-        print(f"No se encontró canal boss-timers con permisos en {message.guild.name}")
+    if not channel:
         return
 
     content = message.content.lower()
@@ -116,6 +116,8 @@ async def on_message(message):
     # ===== ACTIVAR TIMER =====
     if content in ["ch2", "ch4"]:
         boss = content
+
+        # Cancelar y esperar tarea previa
         if timers[boss]["task"]:
             timers[boss]["task"].cancel()
             try:
@@ -123,14 +125,20 @@ async def on_message(message):
             except asyncio.CancelledError:
                 pass
 
-        spawn = datetime.now(timezone.utc) + timedelta(hours=2)
+        ahora = datetime.now(timezone.utc)
+        spawn = ahora + timedelta(hours=2)
+
         timers[boss]["spawn"] = spawn
         ts = timestamp_discord(spawn)
-        await channel.send(f"Boss {boss.upper()} Dead, Next Spawn {ts}")
+
+        await channel.send(
+            f"Boss {boss.upper()} Dead, Next Spawn {ts}"
+        )
+
         task = bot.loop.create_task(ciclo_boss(channel, boss))
         timers[boss]["task"] = task
 
-    # ===== RESET (Alemania) =====
+    # ===== RESET DESDE HORA ALEMANIA =====
     elif content.startswith("reset"):
         parts = content.split()
         if len(parts) != 3:
@@ -138,6 +146,7 @@ async def on_message(message):
             return
 
         _, boss, hora = parts
+
         if boss not in timers:
             return
 
@@ -147,6 +156,8 @@ async def on_message(message):
             return
 
         spawn = muerte + timedelta(hours=2)
+
+        # Cancelar y esperar tarea previa
         if timers[boss]["task"]:
             timers[boss]["task"].cancel()
             try:
@@ -156,15 +167,21 @@ async def on_message(message):
 
         timers[boss]["spawn"] = spawn
         ts = timestamp_discord(spawn)
-        await channel.send(f"{boss.upper()} Reset (death Germany {hora}) → Next Spawn {ts}")
+
+        await channel.send(
+            f"{boss.upper()} Reset (death Germany {hora}) → Next Spawn {ts}"
+        )
+
         task = bot.loop.create_task(ciclo_boss(channel, boss))
         timers[boss]["task"] = task
 
     # ===== DELETE =====
     elif content in ["delete ch2", "delete ch4"]:
         boss = content.split()[1]
+
         if timers[boss]["spawn"]:
             timers[boss]["spawn"] = None
+
             if timers[boss]["task"]:
                 timers[boss]["task"].cancel()
                 try:
@@ -172,6 +189,7 @@ async def on_message(message):
                 except asyncio.CancelledError:
                     pass
                 timers[boss]["task"] = None
+
             await channel.send(f"{boss.upper()} timer deleted")
         else:
             await channel.send(f"No active timer for {boss.upper()}")
