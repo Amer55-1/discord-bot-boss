@@ -6,7 +6,7 @@ import os
 from zoneinfo import ZoneInfo
 
 # ================= CONFIG =================
-RESPAWN = timedelta(hours=2, minutes=3)  # Loop de respawn actualizado
+RESPAWN = timedelta(hours=2, minutes=3)  # Loop de respawn
 BOSS_CHANNEL_NAME = "boss-timers"
 # ==========================================
 
@@ -113,16 +113,13 @@ async def on_message(message):
     if message.author.bot:
         return
 
-    # Obtener el canal "boss-timers" del servidor
     channel = await get_boss_channel(message.guild)
-
     content = message.content.lower()
 
     # ===== ACTIVAR TIMER =====
     if content in ["ch2", "ch4"]:
         boss = content
 
-        # Cancelar y esperar tarea previa
         if timers[boss]["task"]:
             timers[boss]["task"].cancel()
             try:
@@ -134,7 +131,6 @@ async def on_message(message):
         spawn = ahora + timedelta(hours=2)
 
         timers[boss]["spawn"] = spawn
-
         ts = timestamp_discord(spawn)
         await channel.send(f"Boss {boss.upper()} Dead, Next Spawn {ts}")
 
@@ -144,7 +140,6 @@ async def on_message(message):
     # ===== RESET DESDE HORA NY =====
     elif content.startswith("reset"):
         parts = content.split()
-
         if len(parts) != 3:
             await channel.send("Use: reset ch2 02:34")
             return
@@ -155,14 +150,12 @@ async def on_message(message):
             return
 
         muerte = parse_ny_time(hora)
-
         if not muerte:
             await channel.send("Invalid time format. Use HH:MM")
             return
 
         spawn = muerte + timedelta(hours=2)
 
-        # Cancelar y esperar tarea previa
         if timers[boss]["task"]:
             timers[boss]["task"].cancel()
             try:
@@ -171,7 +164,6 @@ async def on_message(message):
                 pass
 
         timers[boss]["spawn"] = spawn
-
         ts = timestamp_discord(spawn)
         await channel.send(f"{boss.upper()} Reset (death NY {hora}) → Next Spawn {ts}")
 
